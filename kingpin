@@ -1,0 +1,53 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+
+import os
+import logging
+
+from commands import getstatusoutput as gso
+from tempfile import NamedTemporaryFile
+from contextlib import contextmanager
+
+logger = logging.getLogger("kingpin")
+
+
+def modem_terminal():
+    status, dmesg_out = gso("dmesg")
+    if status != 0:
+        raise Exception('dmesg returned ' + status)
+
+    tty_lines = [line for line in dmesg_out.split('\n')
+                 if 'GSM modem' in line]
+
+    if len(tty_lines) == 0:
+        raise Exception('No lines for GSM found in dmesg!')
+
+    return sorted([line.split(' ')[-1] for line in tty_lines if 'tty' in line])[0]
+
+def wvdial_config_string(terminal):
+    return '''
+[Dialer Defaults]
+Init = AT+CGDCONT=1,"IP","internet.saunalahti"
+Stupid Mode = 1
+Modem Type = Analog Modem
+ISDN = 0
+Phone = *99#
+Modem = /dev/%s
+Username = { }
+Password = { }
+Baud = 9600
+''' % terminal
+
+@contextmanager
+def wvdial_config():
+    conf = NamedTemporaryFile(delete=False)
+    print(wvdial_config_string(modem_terminal()), file=conf)
+    conf.close()
+    yield conf.name
+    os.unlink(conf.name)
+
+# with wvdial_config() as f:
+#     print(f)
+#     with open(f, 'r') as f2:
+#         print(f2.read())
