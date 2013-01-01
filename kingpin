@@ -3,13 +3,24 @@
 from __future__ import print_function
 
 import os
+import sys
 import logging
+import urllib2
+import socket
+import struct
 
 from commands import getstatusoutput as gso
 from tempfile import NamedTemporaryFile
 from contextlib import contextmanager
+from subprocess import Popen, PIPE
 
+from gevent import Greenlet
+from gevent import sleep
+
+logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 logger = logging.getLogger("kingpin")
+
+_wvdial_reconnect_wait = 10
 
 
 def modem_terminal():
@@ -41,13 +52,29 @@ Baud = 9600
 
 @contextmanager
 def wvdial_config():
-    conf = NamedTemporaryFile(delete=False)
-    print(wvdial_config_string(modem_terminal()), file=conf)
-    conf.close()
+    with NamedTemporaryFile(delete=False) as conf:
+        print(wvdial_config_string(modem_terminal()), file=conf)
     yield conf.name
     os.unlink(conf.name)
 
-# with wvdial_config() as f:
-#     print(f)
-#     with open(f, 'r') as f2:
-#         print(f2.read())
+
+class DialLet(Greenlet):
+    def __init__(self):
+        Greenlet.__init__(self)
+        self.process = None
+
+    def _run(self):
+        while True:
+            try:
+                with wvdial_config() as config:
+                    self.process = Popen(["sudo", "wvdial", "-C", config])
+
+                    logger.info("Entering wvdial process waiting loop")
+                    while self.process.poll() is None:
+                        sleep(1)
+
+                    logger.warning("wvdial process returned %s" % self.process.returncode)
+                logger.info("Waiting for %s seconds for reconnection" % _wvdial_reconnect_wait)
+                sleep(_wvdial_reconnect_wait)
+            except Exception, e:
+                logger.error("Encountered %s" % repr(e))
